@@ -1,7 +1,7 @@
 # XCL – Xbox Series X|S → Windows compatibility layer
 
-[![Discord](https://img.shields.io/badge/Discord-join%20the%20server-5865F2?logo=discord&logoColor=white)](https://discord.gg/xcl)
-**Discord: <https://discord.gg/xcl>**
+[![Discord](https://img.shields.io/badge/Discord-join%20the%20server-5865F2?logo=discord&logoColor=white)](https://discord.gg/Tb4UbPUzRH)
+**Discord: <https://discord.gg/Tb4UbPUzRH>**
 
 XCL runs Xbox Series X|S (GDK) game files on a Windows PC **without CPU emulation**: the game's
 x64 code runs natively and XCL stands in for the console libraries the PC does not have
