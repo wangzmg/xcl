@@ -11,6 +11,14 @@ asks git instead of the GitHub API (whether a commit is on main, a blob's size).
 import argparse, os, re, subprocess, sys
 
 SECTIONS = ("Tested", "Not tested", "AI use")
+HEADINGS = ("What is in it", "Tested", "Regression run", "Not tested", "AI use")
+# placeholder lines copied verbatim from .github/pull_request_template.md (#965)
+TEMPLATE_PLACEHOLDERS = frozenset({
+    "hardware (GPU + driver, CPU), Rust version, debug / release:",
+    "`cargo test --workspace -- --test-threads=4`: N passed, N failed, N ignored (SKIPPED GPU tests: …)",
+    "`cargo test --workspace -- --test-threads=4`: N passed, N failed, N ignored (SKIPPED GPU tests: ...)",
+    "none / tool and model, and what it did",
+})
 # small / open-weight models are not accepted for code (CONTRIBUTING.md, "AI-assisted contributions")
 BANNED_MODELS = r"\b(qwen|deepseek|llama|mistral|mixtral|gemma|phi-?\d)"
 # game data never goes into the repository (CONTRIBUTING.md, "Licence and provenance")
@@ -26,9 +34,10 @@ COMMIT_GROWTH = 1.25  # the PR's peak commit at most this times main's
 
 
 def smoke_blocks(body):
-    """The `xcl-smoke v1` blocks of `body`: each a dict of its `key: value` lines."""
+    """The `xcl-smoke v1` blocks of `body`: each a dict of its `key: value` lines. A block ends at
+    a code fence or at the next block's header (both blocks pasted in one fence)."""
     out = []
-    for m in re.finditer(r"xcl-smoke v1\s*\n(.*?)(?:```|\Z)", body, re.S):
+    for m in re.finditer(r"xcl-smoke v1\s*\n(.*?)(?=xcl-smoke v1|```|\Z)", body, re.S):
         block = {}
         for line in m.group(1).splitlines():
             k, sep, v = line.partition(":")
@@ -47,6 +56,34 @@ def runtime(path):
     return path.startswith("crates/xcl/src/") and "/tests" not in path and not path.endswith("tests.rs")
 
 
+# built into xcl.exe from outside crates/xcl/src: the data it compiles in (stubdb.toml, by
+# include_str!), its build script, and the manifests and lock file that pick its dependencies
+# and the release profile
+RUNTIME_BUILD = ("crates/xcl/build.rs", "crates/xcl/Cargo.toml", "Cargo.toml", "Cargo.lock")
+
+
+def builds_runtime(path):
+    return path.startswith("crates/xcl/data/") or path in RUNTIME_BUILD
+
+
+def section_has_content(body, section):
+    """True when `**section**` exists and has at least one non-placeholder line."""
+    next_heading = "|".join(re.escape(h) for h in HEADINGS)
+    m = re.search(
+        r"\*\*" + re.escape(section) + r"\*\*[ \t]*\n(.*?)(?=\n\*\*(?:" + next_heading + r")\*\*|\Z)",
+        body,
+        re.S,
+    )
+    if not m:
+        return False
+    text = re.sub(r"<!--.*?-->", "", m.group(1), flags=re.S)
+    for raw in text.splitlines():
+        line = re.sub(r"^\s*[-*•]+\s*", "", raw).strip()
+        if line and line not in TEMPLATE_PLACEHOLDERS:
+            return True
+    return False
+
+
 def check(body, head, files, is_main_ancestor, *, test_only=False):
     """The problems (empty: mergeable as far as this check goes). `files`: (path, status, binary,
     size) with `size` a function giving the file's bytes; `is_main_ancestor(sha)`: whether the
@@ -54,7 +91,7 @@ def check(body, head, files, is_main_ancestor, *, test_only=False):
     body = body.replace("\r\n", "\n")
     problems = []
     for section in SECTIONS:
-        if not re.search(r"\*\*" + section + r"\*\*\s*\n\s*\S", body):
+        if not section_has_content(body, section):
             problems.append(f"the **{section}** section is missing or empty")
 
     ai = re.search(r"\*\*AI use\*\*(.*?)(\n\*\*|\Z)", body, re.S)
@@ -74,7 +111,7 @@ def check(body, head, files, is_main_ancestor, *, test_only=False):
         elif binary and not in_test_data:
             problems.append(f"`{path}` is a binary file outside tests/data/ or over 1 MB")
 
-    if not test_only and any(runtime(p) for p, *_ in files):
+    if not test_only and any(runtime(p) or builds_runtime(p) for p, *_ in files):
         blocks = smoke_blocks(body)
         mine = [b for b in blocks if len(b.get("commit", "")) >= 7 and head.startswith(b["commit"].split()[0])]
         clean = [b for b in mine if "uncommitted" not in b.get("commit", "")]
